@@ -137,6 +137,19 @@ nav button.on{color:var(--pri);font-weight:600}
 .tbl tr[data-act]{cursor:pointer}
 .tbl tr.tot td{font-weight:700;border-bottom:0}
 button.tcol{padding:0}
+.lock{position:fixed;inset:0;background:var(--bg);z-index:50;display:none;flex-direction:column;align-items:center;justify-content:center;padding:24px 24px calc(24px + env(safe-area-inset-bottom))}
+.lock.open{display:flex}
+.lock .lt{font-size:18px;font-weight:700;margin-top:8px}
+.lock .le{color:var(--out);font-size:14px;min-height:24px;margin-top:6px}
+.dots{display:flex;gap:14px;margin:18px 0 4px}
+.dots i{width:16px;height:16px;border-radius:50%;border:2px solid var(--pri)}
+.dots i.f{background:var(--pri)}
+.dots.shake{animation:sh .35s}
+@keyframes sh{0%,100%{transform:none}25%{transform:translateX(-10px)}75%{transform:translateX(10px)}}
+.pad{display:grid;grid-template-columns:repeat(3,76px);gap:14px;margin-top:22px}
+.pad button{height:76px;border-radius:50%;background:var(--card);border:1px solid var(--line);font-size:28px;font-weight:500;box-shadow:var(--shadow)}
+.pad button.g{background:none;border:0;box-shadow:none;font-size:15px;color:var(--muted)}
+.lock .lk{margin-top:18px;color:var(--muted);font-size:13px;text-decoration:underline}
 </style>
 </head>
 <body>
@@ -162,10 +175,11 @@ button.tcol{padding:0}
 <div class="ov" id="ov"><div class="sheet" id="sheet"></div></div>
 <input type="file" id="restoreFile" hidden>
 <div class="toast" id="toast"></div>
+<div class="lock" id="lock"></div>
 
 <script>
 'use strict';
-const APP_VERSION='1.2';
+const APP_VERSION='1.4';
 const GROUPS={school:'ကွန်ပျူတာသင်တန်း',chinese:'တရုတ်ကျောင်း',personal:'ကိုယ်ပိုင်'};
 const IN_GROUPS=['school','chinese'], OUT_GROUPS=['school','personal'];
 const MONTHS=['ဇန်နဝါရီ','ဖေဖော်ဝါရီ','မတ်','ဧပြီ','မေ','ဇွန်','ဇူလိုင်','ဩဂုတ်','စက်တင်ဘာ','အောက်တိုဘာ','နိုဝင်ဘာ','ဒီဇင်ဘာ'];
@@ -340,6 +354,10 @@ function settingsHTML(){
     <button class="btn solid" data-act="backup">💾 Backup ထုတ်ရန် (Google Drive စသည်)</button>
     <button class="btn" data-act="restore">📂 Backup ပြန်သွင်းရန်</button>
     <button class="btn" data-act="csv">📊 Excel (CSV) ထုတ်ရန်</button></section>
+  <h2>🔒 Password (PIN)</h2><section class="card">
+    ${S.meta.pin?`<div class="muted">PIN ဖွင့်ထားသည် ✅ · App ဖွင့်တိုင်း (သို့) ၁ မိနစ်ကျော် ထွက်သွားပြီး ပြန်လာရင် PIN တောင်းပါမယ်</div>
+    <button class="btn" data-act="pinchange">PIN ပြောင်းရန်</button><button class="btn danger" data-act="pinoff">PIN ဖြုတ်ရန်</button>`
+    :`<div class="muted">PIN မထည့်ရသေးပါ</div><button class="btn solid" data-act="pinset">🔒 PIN ထည့်ရန်</button>`}</section>
   <h2>ဝင်ငွေ Category</h2><section class="card">${catRows('in')}<button class="btn" data-act="addcat" data-type="in">+ ဝင်ငွေ category ထည့်ရန်</button></section>
   <h2>ထွက်ငွေ Category</h2><section class="card">${catRows('out')}<button class="btn" data-act="addcat" data-type="out">+ ထွက်ငွေ category ထည့်ရန်</button></section>
   <h2>အချက်အလက်</h2><section class="card muted">ဒီ app က အင်တာနက်မလိုပါ။ Data အားလုံး ဒီဖုန်းထဲမှာပဲ သိမ်းထားပါတယ်။<br>
@@ -458,6 +476,52 @@ async function exportCsv(){
   if(r!=='cancel')toast('Excel file ထုတ်ပြီးပါပြီ ✓');
 }
 
+/* ---------- PIN lock ---------- */
+let L=null, hiddenAt=0;
+async function hashPin(pin,salt){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':'+pin));
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}
+const LT={unlock:'PIN ထည့်ပါ',verify:'လက်ရှိ PIN ထည့်ပါ',set1:'PIN အသစ် (ဂဏန်း ၆ လုံး)',set2:'PIN ကို ထပ်ရိုက်ပါ'};
+const pinLen=()=>(L&&(L.mode==='unlock'||L.mode==='verify')&&S.meta.pin&&S.meta.pin.len)||(L&&(L.mode==='unlock'||L.mode==='verify')&&S.meta.pin?4:6);
+function openLock(mode,cb){L={mode,buf:'',first:null,cb,err:'',tries:0,wait:0};$('lock').classList.add('open');drawLock();}
+function closeLock(){$('lock').classList.remove('open');L=null;}
+function drawLock(shake){
+  const w=L.wait>Date.now();
+  $('lock').innerHTML=`<div style="font-size:42px">${L.mode==='unlock'?'🔒':'🔑'}</div><div class="lt">${LT[L.mode]}</div>
+  <div class="dots ${shake?'shake':''}">${[...Array(pinLen()).keys()].map(i=>`<i class="${i<L.buf.length?'f':''}"></i>`).join('')}</div>
+  <div class="le">${w?'မှားလွန်းလို့ စက္ကန့် ၃၀ စောင့်ပါ':L.err}</div>
+  <div class="pad">${[1,2,3,4,5,6,7,8,9].map(n=>`<button data-act="pk" data-k="${n}">${n}</button>`).join('')}
+  ${L.mode==='unlock'?'<span></span>':'<button class="g" data-act="pkcancel">မလုပ်တော့</button>'}<button data-act="pk" data-k="0">0</button><button class="g" data-act="pkdel">⌫</button></div>
+  ${L.mode==='unlock'?'<button class="lk" data-act="pkforgot">PIN မေ့သွားပြီ</button>':''}`;
+}
+async function pinKey(k){
+  if(!L||L.wait>Date.now()||L.buf.length>=pinLen())return;
+  L.buf+=k;L.err='';drawLock();
+  if(L.buf.length<pinLen())return;
+  const v=L.buf;
+  if(L.mode==='unlock'||L.mode==='verify'){
+    const ok=await hashPin(v,S.meta.pin.salt)===S.meta.pin.hash;
+    if(ok){const cb=L.cb;closeLock();cb&&cb();return;}
+    L.tries++;L.buf='';L.err='PIN မှားနေပါတယ်';
+    if(L.tries>=5){L.tries=0;L.wait=Date.now()+30000;setTimeout(()=>L&&drawLock(),30100);}
+    drawLock(true);
+  }else if(L.mode==='set1'){L.first=v;L.mode='set2';L.buf='';setTimeout(drawLock,150);}
+  else{
+    if(v!==L.first){L.mode='set1';L.buf='';L.first=null;L.err='PIN မတူပါ၊ ပြန်ထည့်ပါ';drawLock(true);return;}
+    const salt=uid()+uid();await setMeta('pin',{salt,len:6,hash:await hashPin(v,salt)});
+    const cb=L.cb;closeLock();cb&&cb();
+  }
+}
+async function pinForgot(){
+  if(!confirm('PIN မေ့သွားရင် app ထဲက data အားလုံးကို ဖျက်ပြီး အသစ်ပြန်စရပါမယ်။\nပြီးမှ Google Drive ထဲက backup ကို ပြန်သွင်းလို့ရပါတယ်။\nဆက်လုပ်မလား?'))return;
+  if(!confirm('တကယ်ဖျက်မှာ သေချာလား? (Backup မရှိရင် data ပြန်မရနိုင်ပါ)'))return;
+  await new Promise((res,rej)=>{const t=db.transaction(['tx','meta'],'readwrite');t.objectStore('tx').clear();t.objectStore('meta').clear();t.oncomplete=res;t.onerror=()=>rej(t.error);});
+  location.reload();
+}
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){hiddenAt=Date.now();return;}
+  if(S.meta.pin&&!L&&hiddenAt&&Date.now()-hiddenAt>60000){closeSheet();openLock('unlock');}
+});
+
 /* ---------- events ---------- */
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');
@@ -486,6 +550,13 @@ document.addEventListener('click',e=>{
     case 'cgrp':CF.group=b.dataset.v;CF.name=$('cName').value;CF.icon=$('cIcon').value;openCat(CF,CF.type);break;
     case 'savecat':saveCat();break;
     case 'delcat':delCat();break;
+    case 'pk':pinKey(b.dataset.k);break;
+    case 'pkdel':if(L){L.buf=L.buf.slice(0,-1);drawLock();}break;
+    case 'pkcancel':closeLock();break;
+    case 'pkforgot':pinForgot();break;
+    case 'pinset':openLock('set1',()=>{render();toast('PIN ထည့်ပြီးပါပြီ 🔒');});break;
+    case 'pinchange':openLock('verify',()=>openLock('set1',()=>{render();toast('PIN ပြောင်းပြီးပါပြီ 🔒');}));break;
+    case 'pinoff':openLock('verify',async()=>{await dbDel('meta','pin');delete S.meta.pin;render();toast('PIN ဖြုတ်ပြီးပါပြီ');});break;
   }
 });
 $('restoreFile').addEventListener('change',e=>{const f=e.target.files[0];e.target.value='';if(f)restore(f);});
@@ -498,6 +569,7 @@ $('restoreFile').addEventListener('change',e=>{const f=e.target.files[0];e.targe
   S.cats=S.meta.cats||DEFAULT_CATS.map(c=>({...c}));
   if(!S.meta.cats)await setMeta('cats',S.cats);
   render();
+  if(S.meta.pin)openLock('unlock');
   if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().then(x=>{S.persisted=x;if(S.view==='settings')render();}).catch(()=>{});
   if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 })();
