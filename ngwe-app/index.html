@@ -130,6 +130,13 @@ nav button.on{color:var(--pri);font-weight:600}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .toast{position:fixed;left:50%;bottom:calc(150px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#15201d;color:#fff;padding:9px 16px;border-radius:12px;font-size:14px;z-index:30;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap}
 .toast.show{opacity:1}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th,.tbl td{padding:7px 4px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl th{color:var(--muted);font-weight:600}
+.tbl th:first-child,.tbl td:first-child{text-align:left}
+.tbl tr[data-act]{cursor:pointer}
+.tbl tr.tot td{font-weight:700;border-bottom:0}
+button.tcol{padding:0}
 </style>
 </head>
 <body>
@@ -153,12 +160,12 @@ nav button.on{color:var(--pri);font-weight:600}
 </div></nav>
 
 <div class="ov" id="ov"><div class="sheet" id="sheet"></div></div>
-<input type="file" id="restoreFile" accept=".json,.txt,application/json,text/plain" hidden>
+<input type="file" id="restoreFile" hidden>
 <div class="toast" id="toast"></div>
 
 <script>
 'use strict';
-const APP_VERSION='1.0';
+const APP_VERSION='1.2';
 const GROUPS={school:'ကွန်ပျူတာသင်တန်း',chinese:'တရုတ်ကျောင်း',personal:'ကိုယ်ပိုင်'};
 const IN_GROUPS=['school','chinese'], OUT_GROUPS=['school','personal'];
 const MONTHS=['ဇန်နဝါရီ','ဖေဖော်ဝါရီ','မတ်','ဧပြီ','မေ','ဇွန်','ဇူလိုင်','ဩဂုတ်','စက်တင်ဘာ','အောက်တိုဘာ','နိုဝင်ဘာ','ဒီဇင်ဘာ'];
@@ -196,7 +203,7 @@ const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const $=id=>document.getElementById(id);
 
-const S={tx:[],cats:[],meta:{},ym:ymOf(new Date()),filter:'all',view:'home',persisted:null};
+const S={tx:[],cats:[],meta:{},ym:ymOf(new Date()),filter:'all',view:'home',rmode:'month',persisted:null};
 let F=null, CF=null;
 
 /* ---------- IndexedDB ---------- */
@@ -232,7 +239,7 @@ const signed=(n)=>(n<0?'-':'')+fmt(Math.abs(n));
 /* ---------- render ---------- */
 function render(){
   const [y,m]=S.ym.split('-').map(Number);
-  $('monthLabel').textContent=MONTHS[m-1]+' '+y;
+  $('monthLabel').textContent=(S.view==='report'&&S.rmode==='year')?y+' ခုနှစ်':MONTHS[m-1]+' '+y;
   $('monthNav').style.visibility=S.view==='settings'?'hidden':'visible';
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.view===S.view));
   document.querySelector('.fab').style.display=S.view==='settings'?'none':'';
@@ -283,16 +290,45 @@ function barsHTML(list,type){
     <div class="track"><div class="fill ${type==='in'?'i':'o'}" style="width:${Math.max(2,v/max*100)}%"></div></div></div>`;}).join('');
 }
 
+function summaryHTML(s){const bal=s.in-s.out,prof=s.schoolIn-s.schoolOut;
+  return `<section class="card"><div class="trio"><div><span>ဝင်ငွေ</span><b class="in">${fmt(s.in)}</b></div>
+    <div><span>ထွက်ငွေ</span><b class="out">${fmt(s.out)}</b></div>
+    <div><span>လက်ကျန်</span><b class="${bal<0?'out':'in'}">${signed(bal)}</b></div></div>
+    <div class="profit">
+    <div class="kv"><span>💻 သင်တန်း ဝင်ငွေ</span><b class="in">${fmt(s.schoolIn)}</b></div>
+    <div class="kv"><span>💻 သင်တန်း ထွက်ငွေ</span><b class="out">${fmt(s.schoolOut)}</b></div>
+    <div class="kv"><span>💻 သင်တန်း အမြတ်</span><b class="${prof<0?'out':'in'}">${signed(prof)}</b></div>
+    <div class="kv"><span>🀄 တရုတ်ကျောင်း ဝင်ငွေ</span><b class="in">${fmt(s.chineseIn)}</b></div>
+    <div class="kv"><span>🙋 ကိုယ်ပိုင်အသုံး</span><b class="out">${fmt(s.personalOut)}</b></div></div></section>`;}
+function trendHTML(months,title){
+  const mx=Math.max(1,...months.map(([,x])=>Math.max(x.in,x.out)));
+  return `<section class="card"><div class="muted" style="font-weight:600">${title}</div>
+    <div class="trend">${months.map(([ym,x])=>{const m=+ym.slice(5);return `<button class="tcol" data-act="gomonth" data-ym="${ym}"><div class="tbars">
+      <div style="height:${x.in/mx*100}%;background:var(--in)"></div><div style="height:${x.out/mx*100}%;background:var(--out)"></div></div>
+      <small style="${ym===S.ym?'color:var(--text);font-weight:700':''}">${MSHORT[m-1]}</small></button>`;}).join('')}</div>
+    <div class="legend"><span><i style="background:var(--in)"></i>ဝင်ငွေ</span><span><i style="background:var(--out)"></i>ထွက်ငွေ</span></div></section>`;}
 function reportHTML(){
+  const seg=`<div class="seg" style="margin-top:12px"><button class="${S.rmode==='month'?'on n':''}" data-act="rmode" data-v="month">📅 လစဉ်</button><button class="${S.rmode==='year'?'on n':''}" data-act="rmode" data-v="year">📆 နှစ်ချုပ်</button></div>`;
+  if(S.rmode==='year'){
+    const y=S.ym.slice(0,4), list=S.tx.filter(t=>t.date.startsWith(y)), s=sums(list);
+    const months=[];for(let m=1;m<=12;m++){const ym=y+'-'+pad(m);months.push([ym,sums(monthTx(ym))]);}
+    const used=months.filter(([,x])=>x.in||x.out).length||1;
+    const rows=months.map(([ym,x])=>{const m=+ym.slice(5),bal=x.in-x.out,e=!(x.in||x.out);
+      return `<tr data-act="gomonth" data-ym="${ym}" style="${e?'opacity:.4':''}"><td>${MONTHS[m-1]}</td><td class="in">${fmt(x.in)}</td><td class="out">${fmt(x.out)}</td><td class="${bal<0?'out':'in'}">${signed(bal)}</td></tr>`;}).join('');
+    return seg+summaryHTML(s)+
+    `<section class="card"><div class="kv"><span>လစဉ်ပျမ်းမျှ ဝင်ငွေ</span><b class="in">${fmt(s.in/used)}</b></div>
+     <div class="kv"><span>လစဉ်ပျမ်းမျှ ထွက်ငွေ</span><b class="out">${fmt(s.out/used)}</b></div>
+     <div class="muted">(စာရင်းရှိတဲ့ ${used} လနဲ့ တွက်ထားသည်)</div></section>`+
+    trendHTML(months,y+' – လအလိုက် ဝင်ငွေ / ထွက်ငွေ')+
+    `<h2>လအလိုက် ဇယား (လကိုနှိပ်ရင် အသေးစိတ်ကြည့်ရ)</h2><section class="card" style="padding:6px 10px"><table class="tbl"><tr><th>လ</th><th>ဝင်ငွေ</th><th>ထွက်ငွေ</th><th>လက်ကျန်</th></tr>${rows}
+     <tr class="tot"><td>စုစုပေါင်း</td><td class="in">${fmt(s.in)}</td><td class="out">${fmt(s.out)}</td><td class="${s.in-s.out<0?'out':'in'}">${signed(s.in-s.out)}</td></tr></table></section>
+    <h2>ထွက်ငွေ – Category အလိုက် (${fmt(s.out)})</h2><section class="card">${barsHTML(list,'out')}</section>
+    <h2>ဝင်ငွေ – Category အလိုက် (${fmt(s.in)})</h2><section class="card">${barsHTML(list,'in')}</section>`;
+  }
   const list=monthTx(S.ym), s=sums(list);
   const months=[];for(let i=5;i>=0;i--){const ym=shiftYm(S.ym,-i);months.push([ym,sums(monthTx(ym))]);}
-  const mx=Math.max(1,...months.map(([,x])=>Math.max(x.in,x.out)));
-  return `<section class="card"><div class="t muted" style="font-weight:600">လအလိုက် ဝင်ငွေ / ထွက်ငွေ (၆ လ)</div>
-    <div class="trend">${months.map(([ym,x])=>{const m=+ym.slice(5);return `<div class="tcol"><div class="tbars">
-      <div style="height:${x.in/mx*100}%;background:var(--in)"></div><div style="height:${x.out/mx*100}%;background:var(--out)"></div></div>
-      <small style="${ym===S.ym?'color:var(--text);font-weight:700':''}">${MSHORT[m-1]}</small></div>`;}).join('')}</div>
-    <div class="legend"><span><i style="background:var(--in)"></i>ဝင်ငွေ</span><span><i style="background:var(--out)"></i>ထွက်ငွေ</span></div></section>
-  <h2>ထွက်ငွေ – Category အလိုက် (${fmt(s.out)})</h2><section class="card">${barsHTML(list,'out')}</section>
+  return seg+summaryHTML(s)+trendHTML(months,'လအလိုက် ဝင်ငွေ / ထွက်ငွေ (၆ လ)')+
+  `<h2>ထွက်ငွေ – Category အလိုက် (${fmt(s.out)})</h2><section class="card">${barsHTML(list,'out')}</section>
   <h2>ဝင်ငွေ – Category အလိုက် (${fmt(s.in)})</h2><section class="card">${barsHTML(list,'in')}</section>`;
 }
 
@@ -429,8 +465,10 @@ document.addEventListener('click',e=>{
   const a=b.dataset.act;
   switch(a){
     case 'nav':S.view=b.dataset.view;render();scrollTo(0,0);break;
-    case 'prev':S.ym=shiftYm(S.ym,-1);render();break;
-    case 'next':S.ym=shiftYm(S.ym,1);render();break;
+    case 'prev':S.ym=shiftYm(S.ym,(S.view==='report'&&S.rmode==='year')?-12:-1);render();break;
+    case 'next':S.ym=shiftYm(S.ym,(S.view==='report'&&S.rmode==='year')?12:1);render();break;
+    case 'rmode':S.rmode=b.dataset.v;render();break;
+    case 'gomonth':S.ym=b.dataset.ym;S.rmode='month';render();scrollTo(0,0);break;
     case 'filter':S.filter=b.dataset.f;render();break;
     case 'add':openForm(null);break;
     case 'open':openForm(S.tx.find(t=>t.id===b.dataset.id));break;
